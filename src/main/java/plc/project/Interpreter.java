@@ -6,6 +6,7 @@ import java.math.BigInteger;
 import java.math.RoundingMode;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.stream.Collectors;
 
 public class Interpreter implements Ast.Visitor<Environment.PlcObject> {
@@ -49,7 +50,26 @@ public class Interpreter implements Ast.Visitor<Environment.PlcObject> {
 
     @Override
     public Environment.PlcObject visit(Ast.Method ast) {
-        throw new UnsupportedOperationException(); //TODO
+        scope.defineFunction(ast.getName(), ast.getParameters().size(), args -> {
+            int i = 0;
+            for(String params: ast.getParameters()) {
+                scope.defineVariable(params, args.get(i));
+                i++;
+            }
+            for (Ast.Stmt stmt : ast.getStatements()) {
+                try {
+                    visit(stmt);
+                }
+                catch (Return r) {
+                    return r.value;
+                }
+                catch (Exception e) {
+                    return Environment.NIL;
+                }
+            }
+            return Environment.NIL;
+        });
+        return Environment.NIL;
     }
 
     @Override
@@ -72,13 +92,13 @@ public class Interpreter implements Ast.Visitor<Environment.PlcObject> {
     @Override
     public Environment.PlcObject visit(Ast.Stmt.Assignment ast) {
         if(ast.getReceiver() instanceof Ast.Expr.Access) {
-            Environment.PlcObject result = visit(ast.getReceiver());
-            try {
-                scope = scope.getParent();
+            if (((Ast.Expr.Access) ast.getReceiver()).getReceiver().isPresent()) {
+                Environment.PlcObject result = visit(((Ast.Expr.Access) ast.getReceiver()).getReceiver().get());
                 result.setField(((Ast.Expr.Access) ast.getReceiver()).getName(), visit(ast.getValue()));
             }
-            catch(RuntimeException E){
-                scope.defineVariable(((Ast.Expr.Access) ast.getReceiver()).getName(), visit(ast.getValue()));
+            else {
+                Environment.Variable variable = scope.lookupVariable(((Ast.Expr.Access) ast.getReceiver()).getName());
+                variable.setValue(visit(ast.getValue()));
             }
         }
         return Environment.NIL;
@@ -379,14 +399,15 @@ public class Interpreter implements Ast.Visitor<Environment.PlcObject> {
 
     @Override
     public Environment.PlcObject visit(Ast.Expr.Function ast) {
-        /*if (ast.getReceiver().isPresent()) {
-            visit(ast.getReceiver().get());
-            return Environment.create(scope.lookupFunction());
+        List<Environment.PlcObject> args = new ArrayList<>();
+        for (Ast.Expr arg: ast.getArguments()) {
+            args.add(visit(arg));
         }
-        else {
-            return scope.lookupFunction(ast.getName(), );
-        }*/
-        return Environment.NIL;
+        if (ast.getReceiver().isPresent()) {
+            Environment.PlcObject result = visit(ast.getReceiver().get());
+            return Environment.create(result.callMethod(ast.getName(), args).getValue());
+        }
+        return scope.lookupFunction(ast.getName(), args.size()).invoke(args);
     }
 
     /**
